@@ -25,12 +25,8 @@ RUN useradd --create-home --shell /bin/bash appuser
 RUN chown -R appuser:appuser /app
 USER appuser
 
-# Expose port
+# Expose port (Railway sets PORT dynamically)
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
-
-# Run the server
-CMD ["uvicorn", "workers.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the server - Railway overrides this with startCommand in railway.json
+CMD ["sh", "-c", "uvicorn workers.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
