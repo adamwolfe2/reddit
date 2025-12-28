@@ -7,21 +7,10 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 import uvicorn
 import logging
+import os
 from datetime import datetime
 
-from reddit.post import process_pending_posts, create_scheduled_post, PostManager
-from reddit.reply import process_unreplied_mentions, ReplyManager
-from reddit.warmup import process_warmup_accounts, check_warmup_status
-from reddit.auth import RedditClient, verify_all_accounts
-from reddit.metrics import sync_all_metrics, get_client_stats
-from scraper.website import WebsiteScraper
-from ai.keywords import KeywordGenerator, SubredditDiscovery
-from ai.content import ContentGenerator
-from ai.scoring import RelevanceScorer
-from database.supabase_client import db
-from config import config
-
-# Configure logging
+# Configure logging first
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -38,7 +27,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -105,7 +94,7 @@ class VerifyAccountRequest(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - always returns healthy if server is running"""
     return {
         "status": "healthy",
         "service": "reddit-growth-engine",
@@ -116,7 +105,19 @@ async def health_check():
 @app.get("/status")
 async def service_status():
     """Get service status with configuration check"""
-    errors = config.validate()
+    errors = []
+    try:
+        from config import config
+        errors = config.validate()
+    except Exception as e:
+        errors = [f"Config error: {str(e)}"]
+
+    # Check env vars directly as backup
+    if not os.getenv("SUPABASE_URL"):
+        errors.append("SUPABASE_URL not set")
+    if not os.getenv("SUPABASE_SERVICE_KEY"):
+        errors.append("SUPABASE_SERVICE_KEY not set")
+
     return {
         "healthy": len(errors) == 0,
         "configuration_errors": errors,
@@ -134,22 +135,25 @@ async def onboard_client(request: OnboardClientRequest, background_tasks: Backgr
     """
     Onboard a new client - scrape website, extract info, generate keywords
     """
+    from database.supabase_client import db
+
     client = db.get_client(request.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # Run onboarding in background
     background_tasks.add_task(run_onboarding, request.client_id, request.website_url)
-
     return {"status": "onboarding_started", "client_id": request.client_id}
 
 
 async def run_onboarding(client_id: str, website_url: str):
     """Background task to run full onboarding"""
+    from database.supabase_client import db
+    from scraper.website import WebsiteScraper
+    from ai.keywords import KeywordGenerator, SubredditDiscovery
+
     logger.info(f"Starting onboarding for client {client_id}")
 
     try:
-        # 1. Scrape website
         scraper = WebsiteScraper()
         product_info = scraper.extract_product_info(website_url)
 
@@ -163,8 +167,6 @@ async def run_onboarding(client_id: str, website_url: str):
             logger.error(f"Onboarding failed for {client_id}: scraping failed")
             return
 
-        # 2. Update client with extracted info
-        client = db.get_client(client_id)
         db.update_client(
             client_id,
             {
@@ -182,7 +184,6 @@ async def run_onboarding(client_id: str, website_url: str):
 
         logger.info(f"Client {client_id}: website scraped successfully")
 
-        # 3. Generate keywords
         keyword_gen = KeywordGenerator()
         keywords = keyword_gen.generate_keywords(
             product_name=product_info.get("product_name", ""),
@@ -191,26 +192,22 @@ async def run_onboarding(client_id: str, website_url: str):
             competitors=product_info.get("competitors", []),
         )
 
-        # Save keywords
         keyword_records = [
             {
                 "client_id": client_id,
                 "keyword": k["keyword"],
                 "keyword_type": k["type"],
                 "priority": k["priority"],
-                "f5bot_enabled": k["priority"] >= 7,  # Auto-enable F5Bot for high priority
+                "f5bot_enabled": k["priority"] >= 7,
             }
             for k in keywords
         ]
         db.create_keywords(keyword_records)
-
         logger.info(f"Client {client_id}: {len(keywords)} keywords generated")
 
-        # 4. Suggest subreddits
         subreddit_discovery = SubredditDiscovery()
         suggested_subs = subreddit_discovery.suggest_subreddits(product_info, num_suggestions=20)
 
-        # Save subreddits
         subreddit_records = [
             {
                 "client_id": client_id,
@@ -227,7 +224,6 @@ async def run_onboarding(client_id: str, website_url: str):
 
         logger.info(f"Client {client_id}: {len(suggested_subs)} subreddits suggested")
 
-        # 5. Mark onboarding complete
         db.update_client(
             client_id,
             {
@@ -249,12 +245,15 @@ async def run_onboarding(client_id: str, website_url: str):
 
     except Exception as e:
         logger.error(f"Onboarding failed for {client_id}: {e}")
-        db.update_client(client_id, {"status": "onboarding_failed"})
-        db.log_activity(
-            activity_type="client_onboarded",
-            client_id=client_id,
-            details={"error": str(e)},
-        )
+        try:
+            db.update_client(client_id, {"status": "onboarding_failed"})
+            db.log_activity(
+                activity_type="client_onboarded",
+                client_id=client_id,
+                details={"error": str(e)},
+            )
+        except:
+            pass
 
 
 # ============================================================================
@@ -265,6 +264,7 @@ async def run_onboarding(client_id: str, website_url: str):
 @app.post("/posts/process")
 async def process_posts(request: ProcessPostsRequest):
     """Process pending scheduled posts"""
+    from reddit.post import process_pending_posts
     results = process_pending_posts(limit=request.limit)
     return results
 
@@ -272,6 +272,9 @@ async def process_posts(request: ProcessPostsRequest):
 @app.post("/posts/create")
 async def create_post(request: CreatePostRequest):
     """Create a new post (manual)"""
+    from database.supabase_client import db
+    from reddit.post import create_scheduled_post
+
     client = db.get_client(request.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -297,6 +300,9 @@ async def create_post(request: CreatePostRequest):
 @app.post("/posts/generate")
 async def generate_post(request: GeneratePostRequest):
     """Generate a new post using AI"""
+    from database.supabase_client import db
+    from ai.content import ContentGenerator
+
     client = db.get_client(request.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -306,7 +312,6 @@ async def generate_post(request: GeneratePostRequest):
         raise HTTPException(status_code=404, detail="Subreddit not found")
 
     gen = ContentGenerator()
-
     content = gen.generate_post_content(
         topic=request.topic,
         subreddit=subreddit["name"],
@@ -320,7 +325,6 @@ async def generate_post(request: GeneratePostRequest):
         include_product_mention=request.include_product_mention,
     )
 
-    # Create post record
     status = "scheduled" if request.schedule_at else "draft"
     post = db.create_post(
         {
@@ -352,6 +356,7 @@ async def get_posts(
     limit: int = Query(default=50, ge=1, le=200),
 ):
     """Get posts for a client"""
+    from database.supabase_client import db
     posts = db.get_posts_for_client(client_id, status=status, limit=limit)
     return {"posts": posts, "total": len(posts)}
 
@@ -364,6 +369,7 @@ async def get_posts(
 @app.post("/mentions/process")
 async def process_mentions(request: ProcessMentionsRequest):
     """Process unreplied mentions"""
+    from reddit.reply import process_unreplied_mentions
     results = process_unreplied_mentions(
         client_id=request.client_id, limit=request.limit
     )
@@ -373,6 +379,9 @@ async def process_mentions(request: ProcessMentionsRequest):
 @app.post("/mentions/score")
 async def score_mention(request: ScoreMentionRequest):
     """Score a mention for relevance"""
+    from database.supabase_client import db
+    from ai.scoring import RelevanceScorer
+
     client = db.get_client(request.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -398,6 +407,7 @@ async def get_mentions(
     limit: int = Query(default=50, ge=1, le=200),
 ):
     """Get mentions for a client"""
+    from database.supabase_client import db
     mentions = db.get_mentions_for_client(client_id, replied=replied, limit=limit)
     return {"mentions": mentions, "total": len(mentions)}
 
@@ -410,6 +420,7 @@ async def get_mentions(
 @app.post("/warmup/process")
 async def process_warmup():
     """Process account warmup actions"""
+    from reddit.warmup import process_warmup_accounts
     results = process_warmup_accounts()
     return results
 
@@ -417,6 +428,7 @@ async def process_warmup():
 @app.get("/warmup/status/{account_id}")
 async def get_warmup_status(account_id: str):
     """Get warmup status for a specific account"""
+    from reddit.warmup import check_warmup_status
     status = check_warmup_status(account_id)
     if "error" in status:
         raise HTTPException(status_code=404, detail=status["error"])
@@ -431,6 +443,7 @@ async def get_warmup_status(account_id: str):
 @app.post("/metrics/sync")
 async def sync_metrics():
     """Sync metrics for all posts"""
+    from reddit.metrics import sync_all_metrics
     results = sync_all_metrics()
     return results
 
@@ -438,6 +451,7 @@ async def sync_metrics():
 @app.get("/metrics/{client_id}")
 async def get_metrics(client_id: str, days: int = Query(default=30, ge=1, le=365)):
     """Get metrics for a client"""
+    from reddit.metrics import get_client_stats
     stats = get_client_stats(client_id, days=days)
     return stats
 
@@ -450,6 +464,9 @@ async def get_metrics(client_id: str, days: int = Query(default=30, ge=1, le=365
 @app.post("/keywords/generate")
 async def generate_keywords(request: GenerateKeywordsRequest):
     """Generate keywords for a client"""
+    from database.supabase_client import db
+    from ai.keywords import KeywordGenerator
+
     client = db.get_client(request.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -462,7 +479,6 @@ async def generate_keywords(request: GenerateKeywordsRequest):
         competitors=client.get("competitors", []),
     )
 
-    # Save keywords (upsert to avoid duplicates)
     saved = []
     for kw in keywords:
         existing = db.get_keywords_for_client(request.client_id)
@@ -486,6 +502,7 @@ async def generate_keywords(request: GenerateKeywordsRequest):
 @app.get("/keywords/{client_id}")
 async def get_keywords(client_id: str, active_only: bool = True):
     """Get keywords for a client"""
+    from database.supabase_client import db
     keywords = db.get_keywords_for_client(client_id, active_only=active_only)
     return {"keywords": keywords, "total": len(keywords)}
 
@@ -498,6 +515,7 @@ async def get_keywords(client_id: str, active_only: bool = True):
 @app.get("/subreddits/{client_id}")
 async def get_subreddits(client_id: str, active_only: bool = True):
     """Get subreddits for a client"""
+    from database.supabase_client import db
     subreddits = db.get_subreddits_for_client(client_id, active_only=active_only)
     return {"subreddits": subreddits, "total": len(subreddits)}
 
@@ -505,6 +523,9 @@ async def get_subreddits(client_id: str, active_only: bool = True):
 @app.post("/subreddits/discover/{client_id}")
 async def discover_subreddits(client_id: str):
     """Discover new subreddits for a client"""
+    from database.supabase_client import db
+    from ai.keywords import SubredditDiscovery
+
     client = db.get_client(client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -520,7 +541,6 @@ async def discover_subreddits(client_id: str):
         num_suggestions=20,
     )
 
-    # Save new subreddits
     existing = db.get_subreddits_for_client(client_id, active_only=False)
     existing_names = {s["name"].lower() for s in existing}
 
@@ -552,6 +572,9 @@ async def discover_subreddits(client_id: str):
 @app.post("/accounts/verify")
 async def verify_account(request: VerifyAccountRequest):
     """Verify a Reddit account's credentials"""
+    from database.supabase_client import db
+    from reddit.auth import RedditClient
+
     account = db.get_account(request.account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -568,6 +591,7 @@ async def verify_account(request: VerifyAccountRequest):
 @app.post("/accounts/verify-all")
 async def verify_all():
     """Verify all accounts"""
+    from reddit.auth import verify_all_accounts
     results = verify_all_accounts()
     return results
 
@@ -575,8 +599,8 @@ async def verify_all():
 @app.get("/accounts/{organization_id}")
 async def get_accounts(organization_id: str):
     """Get all accounts for an organization"""
+    from database.supabase_client import db
     accounts = db.get_accounts_for_organization(organization_id)
-    # Remove sensitive data
     for account in accounts:
         account.pop("password_encrypted", None)
         account.pop("reddit_client_secret", None)
@@ -589,8 +613,9 @@ async def get_accounts(organization_id: str):
 
 
 @app.get("/clients/{client_id}")
-async def get_client(client_id: str):
+async def get_client_endpoint(client_id: str):
     """Get client details"""
+    from database.supabase_client import db
     client = db.get_client(client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -600,6 +625,7 @@ async def get_client(client_id: str):
 @app.get("/clients/org/{organization_id}")
 async def get_clients_for_org(organization_id: str):
     """Get all clients for an organization"""
+    from database.supabase_client import db
     clients = db.get_clients_for_organization(organization_id)
     return {"clients": clients, "total": len(clients)}
 
@@ -616,6 +642,9 @@ async def generate_post_ideas(
     count: int = Query(default=5, ge=1, le=20),
 ):
     """Generate post ideas for a subreddit"""
+    from database.supabase_client import db
+    from ai.content import ContentGenerator
+
     client = db.get_client(client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -639,9 +668,11 @@ async def generate_post_ideas(
 # ============================================================================
 
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", "8000"))
+    debug = os.getenv("DEBUG", "false").lower() == "true"
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=config.PORT,
-        reload=config.DEBUG,
+        port=port,
+        reload=debug,
     )

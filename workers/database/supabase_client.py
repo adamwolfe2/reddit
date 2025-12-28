@@ -13,9 +13,18 @@ class SupabaseClient:
     """Wrapper for Supabase client with domain-specific methods"""
 
     def __init__(self):
-        self.client: Client = create_client(
-            config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY
-        )
+        self._client: Optional[Client] = None
+
+    @property
+    def client(self) -> Client:
+        """Lazy-load the Supabase client"""
+        if self._client is None:
+            if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+                raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
+            self._client = create_client(
+                config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY
+            )
+        return self._client
 
     # =========================================================================
     # ORGANIZATIONS
