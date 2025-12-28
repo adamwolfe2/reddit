@@ -9,7 +9,7 @@ anthropic==0.18.1
 
 # Web Scraping
 firecrawl-py==0.0.16
-httpx==0.27.0
+httpx>=0.24,<0.26
 
 # Utilities
 python-dotenv==1.0.1
