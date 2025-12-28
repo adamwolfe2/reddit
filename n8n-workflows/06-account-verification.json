@@ -1,0 +1,162 @@
+{
+  "name": "Reddit Growth - Weekly Account Verification",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": 1,
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Weekly Monday 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_URL}}/accounts/verify-all",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "verify-accounts",
+      "name": "Verify All Accounts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-issues",
+              "leftValue": "={{$json.suspended + $json.failed}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-issues",
+      "name": "Any Issues?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#reddit-alerts",
+        "text": "=🚨 *Account Verification Alert*\n\n• Verified: {{$json.verified}}\n• Suspended: {{$json.suspended}}\n• Failed: {{$json.failed}}\n\n*Issues:*\n{{JSON.stringify($json.errors, null, 2)}}",
+        "otherOptions": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack - Issues Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1000, 200],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-creds",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "#reddit-ops",
+        "text": "=✅ *Weekly Account Verification Complete*\n\nAll {{$json.verified}} accounts verified successfully!",
+        "otherOptions": {}
+      },
+      "id": "slack-success",
+      "name": "Slack - All Good",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1000, 400],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-creds",
+          "name": "Slack API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Monday 8am": {
+      "main": [
+        [
+          {
+            "node": "Verify All Accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify All Accounts": {
+      "main": [
+        [
+          {
+            "node": "Any Issues?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Issues?": {
+      "main": [
+        [
+          {
+            "node": "Slack - Issues Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack - All Good",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "reddit-growth"
+    }
+  ]
+}

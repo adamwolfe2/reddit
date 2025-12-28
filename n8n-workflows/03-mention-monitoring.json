@@ -1,0 +1,304 @@
+{
+  "name": "Reddit Growth - Mention Monitoring",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.F5BOT_RSS_URL}}",
+        "options": {}
+      },
+      "id": "rss-feed",
+      "name": "F5Bot RSS Feed",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-items",
+      "name": "Split Into Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{$env.SUPABASE_URL}}/rest/v1/mentions"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "string",
+        "filterJson": "=reddit_post_id=eq.{{$json.guid}}"
+      },
+      "id": "check-exists",
+      "name": "Check Mention Exists",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-creds",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-new",
+              "leftValue": "={{$json.length}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-new",
+      "name": "Is New Mention?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse F5Bot RSS item to create mention record\nconst item = $input.first().json;\n\n// Extract subreddit from link\nconst urlMatch = item.link.match(/\\/r\\/([^/]+)/);\nconst subreddit = urlMatch ? urlMatch[1] : 'unknown';\n\n// Get client_id from keyword matching (you'll need to set this up)\n// For now, use a default or environment variable\nconst client_id = $env.DEFAULT_CLIENT_ID;\n\nreturn {\n  client_id: client_id,\n  reddit_post_id: item.guid,\n  reddit_url: item.link,\n  subreddit: subreddit,\n  title: item.title,\n  content_preview: item.contentSnippet || item.content?.substring(0, 500),\n  is_post: true,\n  detected_at: new Date().toISOString(),\n  should_reply: true,\n  replied: false\n};"
+      },
+      "id": "parse-mention",
+      "name": "Parse Mention Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 200]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{$env.SUPABASE_URL}}/rest/v1/mentions"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "client_id",
+              "value": "={{$json.client_id}}"
+            },
+            {
+              "key": "reddit_post_id",
+              "value": "={{$json.reddit_post_id}}"
+            },
+            {
+              "key": "reddit_url",
+              "value": "={{$json.reddit_url}}"
+            },
+            {
+              "key": "subreddit",
+              "value": "={{$json.subreddit}}"
+            },
+            {
+              "key": "title",
+              "value": "={{$json.title}}"
+            },
+            {
+              "key": "content_preview",
+              "value": "={{$json.content_preview}}"
+            },
+            {
+              "key": "is_post",
+              "value": "={{$json.is_post}}"
+            },
+            {
+              "key": "detected_at",
+              "value": "={{$json.detected_at}}"
+            },
+            {
+              "key": "should_reply",
+              "value": "={{$json.should_reply}}"
+            },
+            {
+              "key": "replied",
+              "value": "={{$json.replied}}"
+            }
+          ]
+        }
+      },
+      "id": "insert-mention",
+      "name": "Insert Mention",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1500, 200],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-creds",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_URL}}/mentions/process",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"limit\": 20\n}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "process-mentions",
+      "name": "Process New Mentions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1700, 200]
+    },
+    {
+      "parameters": {},
+      "id": "skip-existing",
+      "name": "Skip (Already Exists)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1300, 400]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "F5Bot RSS Feed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F5Bot RSS Feed": {
+      "main": [
+        [
+          {
+            "node": "Split Into Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Into Items": {
+      "main": [
+        [
+          {
+            "node": "Check Mention Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Mention Exists": {
+      "main": [
+        [
+          {
+            "node": "Is New Mention?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Mention?": {
+      "main": [
+        [
+          {
+            "node": "Parse Mention Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (Already Exists)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Mention Data": {
+      "main": [
+        [
+          {
+            "node": "Insert Mention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Mention": {
+      "main": [
+        [
+          {
+            "node": "Process New Mentions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "reddit-growth"
+    }
+  ]
+}

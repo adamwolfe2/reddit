@@ -1,0 +1,162 @@
+{
+  "name": "Reddit Growth - Daily Posting",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "triggerAtHour": 10
+            },
+            {
+              "field": "hours",
+              "triggerAtHour": 14
+            },
+            {
+              "field": "hours",
+              "triggerAtHour": 18
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule - 10am, 2pm, 6pm",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_URL}}/posts/process",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"limit\": 10\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "process-posts",
+      "name": "Process Scheduled Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-failures",
+              "leftValue": "={{$json.failed}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-failures",
+      "name": "Any Failures?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#reddit-alerts",
+        "text": "=⚠️ *Reddit Posting Alert*\n\n• Processed: {{$json.processed}}\n• Success: {{$json.success}}\n• Failed: {{$json.failed}}\n• Skipped: {{$json.skipped}}\n\n*Errors:*\n{{$json.errors}}",
+        "otherOptions": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack - Alert Failures",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1000, 200],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-creds",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "no-op-success",
+      "name": "All Good",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 400]
+    }
+  ],
+  "connections": {
+    "Schedule - 10am, 2pm, 6pm": {
+      "main": [
+        [
+          {
+            "node": "Process Scheduled Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Scheduled Posts": {
+      "main": [
+        [
+          {
+            "node": "Any Failures?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Failures?": {
+      "main": [
+        [
+          {
+            "node": "Slack - Alert Failures",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "All Good",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "reddit-growth"
+    }
+  ]
+}

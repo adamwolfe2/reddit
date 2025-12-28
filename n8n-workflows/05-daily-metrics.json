@@ -1,0 +1,97 @@
+{
+  "name": "Reddit Growth - Daily Metrics Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "triggerAtHour": 0,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily at 12:30am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_URL}}/metrics/sync",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 1800000
+        }
+      },
+      "id": "sync-metrics",
+      "name": "Sync All Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#reddit-ops",
+        "text": "=📊 *Daily Metrics Sync Complete*\n\n• Posts updated: {{$json.posts_updated}}/{{$json.posts_processed}}\n• Replies updated: {{$json.replies_updated}}/{{$json.replies_processed}}\n• Daily metrics computed: {{$json.daily_metrics_updated}}\n• Errors: {{$json.errors.length}}",
+        "otherOptions": {}
+      },
+      "id": "slack-summary",
+      "name": "Slack - Sync Summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [750, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-creds",
+          "name": "Slack API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily at 12:30am": {
+      "main": [
+        [
+          {
+            "node": "Sync All Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync All Metrics": {
+      "main": [
+        [
+          {
+            "node": "Slack - Sync Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "reddit-growth"
+    }
+  ]
+}

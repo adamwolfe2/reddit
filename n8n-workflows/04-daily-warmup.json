@@ -1,0 +1,166 @@
+{
+  "name": "Reddit Growth - Daily Warmup",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily at 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_URL}}/warmup/process",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 1800000
+        }
+      },
+      "id": "warmup-accounts",
+      "name": "Process Account Warmup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#reddit-ops",
+        "text": "=🔥 *Daily Warmup Complete*\n\n• Accounts processed: {{$json.processed}}\n• Actions performed: {{$json.actions_performed}}\n• Fully warmed: {{$json.fully_warmed}}\n• Errors: {{$json.errors.length}}\n\n*Stage Distribution:*\n{{JSON.stringify($json.stages, null, 2)}}",
+        "otherOptions": {}
+      },
+      "id": "slack-summary",
+      "name": "Slack - Daily Summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [750, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-creds",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-new-ready",
+              "leftValue": "={{$json.fully_warmed}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-new-ready",
+      "name": "New Accounts Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#reddit-ops",
+        "text": "=🎉 *Accounts Fully Warmed Up!*\n\n{{$json.fully_warmed}} account(s) are now ready for marketing activities!",
+        "otherOptions": {}
+      },
+      "id": "slack-ready-alert",
+      "name": "Slack - Ready Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1250, 200],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-creds",
+          "name": "Slack API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily at 9am": {
+      "main": [
+        [
+          {
+            "node": "Process Account Warmup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Account Warmup": {
+      "main": [
+        [
+          {
+            "node": "Slack - Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Daily Summary": {
+      "main": [
+        [
+          {
+            "node": "New Accounts Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Accounts Ready?": {
+      "main": [
+        [
+          {
+            "node": "Slack - Ready Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "reddit-growth"
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "name": "Reddit Growth - Client Onboarding",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "client-onboard",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook - Client Signup",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "client-onboard"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_URL}}/onboard",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"client_id\": \"{{$json.body.client_id}}\",\n  \"website_url\": \"{{$json.body.website_url}}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-onboard",
+      "name": "Call Onboarding API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Onboarding started\",\n  \"client_id\": \"{{$json.client_id}}\"\n}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"{{$json.error}}\"\n}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond - Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [750, 450]
+    }
+  ],
+  "connections": {
+    "Webhook - Client Signup": {
+      "main": [
+        [
+          {
+            "node": "Call Onboarding API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Onboarding API": {
+      "main": [
+        [
+          {
+            "node": "Respond - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "reddit-growth",
+      "createdAt": "2024-12-27T00:00:00.000Z",
+      "updatedAt": "2024-12-27T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-27T00:00:00.000Z",
+  "versionId": "1"
+}
