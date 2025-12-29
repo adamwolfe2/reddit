@@ -7,22 +7,23 @@
           "interval": [
             {
               "field": "hours",
-              "triggerAtHour": 0,
-              "triggerAtMinute": 30
+              "triggerAtHour": 1,
+              "triggerAtMinute": 15
             }
           ]
         }
       },
       "id": "schedule-trigger",
-      "name": "Daily at 12:30am",
+      "name": "Daily 1:15am",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.1,
+      "typeVersion": 1.2,
       "position": [250, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.WORKER_URL}}/metrics/sync",
+        "url": "={{ $env.WORKER_URL }}/metrics/sync",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -37,47 +38,57 @@
         }
       },
       "id": "sync-metrics",
-      "name": "Sync All Metrics",
+      "name": "Sync Metrics",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [500, 300]
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "channel": "#reddit-ops",
-        "text": "=📊 *Daily Metrics Sync Complete*\n\n• Posts updated: {{$json.posts_updated}}/{{$json.posts_processed}}\n• Replies updated: {{$json.replies_updated}}/{{$json.replies_processed}}\n• Daily metrics computed: {{$json.daily_metrics_updated}}\n• Errors: {{$json.errors.length}}",
-        "otherOptions": {}
+        "jsCode": "// Log metrics sync results\nconst result = $input.first().json;\n\nreturn {\n  status: 'sync_complete',\n  timestamp: new Date().toISOString(),\n  posts: {\n    processed: result.posts_processed || 0,\n    updated: result.posts_updated || 0\n  },\n  replies: {\n    processed: result.replies_processed || 0,\n    updated: result.replies_updated || 0\n  },\n  daily_metrics_updated: result.daily_metrics_updated || 0,\n  errors: result.errors || []\n};"
       },
-      "id": "slack-summary",
-      "name": "Slack - Sync Summary",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [750, 300],
-      "credentials": {
-        "slackApi": {
-          "id": "slack-creds",
-          "name": "Slack API"
-        }
-      }
+      "id": "log-success",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 250]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log API error\nconst error = $input.first().json;\n\nconsole.error('Metrics sync error:', JSON.stringify(error));\n\nreturn {\n  status: 'sync_error',\n  timestamp: new Date().toISOString(),\n  error: error.message || error.detail || 'Unknown error'\n};"
+      },
+      "id": "log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 400]
     }
   ],
   "connections": {
-    "Daily at 12:30am": {
+    "Daily 1:15am": {
       "main": [
         [
           {
-            "node": "Sync All Metrics",
+            "node": "Sync Metrics",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Sync All Metrics": {
+    "Sync Metrics": {
       "main": [
         [
           {
-            "node": "Slack - Sync Summary",
+            "node": "Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Error",
             "type": "main",
             "index": 0
           }
@@ -86,12 +97,19 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York"
   },
   "staticData": null,
   "tags": [
     {
       "name": "reddit-growth"
     }
-  ]
+  ],
+  "pinData": {},
+  "meta": {
+    "notes": "Nightly metrics sync at 1:15am ET. Pulls latest upvotes/comments from Reddit for all posts and replies, updates karma stats, and computes daily aggregates."
+  }
 }

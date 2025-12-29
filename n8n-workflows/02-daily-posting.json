@@ -7,29 +7,33 @@
           "interval": [
             {
               "field": "hours",
-              "triggerAtHour": 10
+              "triggerAtHour": 9,
+              "triggerAtMinute": 15
             },
             {
               "field": "hours",
-              "triggerAtHour": 14
+              "triggerAtHour": 13,
+              "triggerAtMinute": 30
             },
             {
               "field": "hours",
-              "triggerAtHour": 18
+              "triggerAtHour": 18,
+              "triggerAtMinute": 45
             }
           ]
         }
       },
       "id": "schedule-trigger",
-      "name": "Schedule - 10am, 2pm, 6pm",
+      "name": "Schedule 3x Daily",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.1,
+      "typeVersion": 1.2,
       "position": [250, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.WORKER_URL}}/posts/process",
+        "url": "={{ $env.WORKER_URL }}/posts/process",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -49,8 +53,9 @@
       "id": "process-posts",
       "name": "Process Scheduled Posts",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [500, 300]
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -63,7 +68,7 @@
           "conditions": [
             {
               "id": "check-failures",
-              "leftValue": "={{$json.failed}}",
+              "leftValue": "={{ $json.failed || 0 }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -79,37 +84,41 @@
       "name": "Any Failures?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [750, 300]
+      "position": [750, 250]
     },
     {
       "parameters": {
-        "channel": "#reddit-alerts",
-        "text": "=⚠️ *Reddit Posting Alert*\n\n• Processed: {{$json.processed}}\n• Success: {{$json.success}}\n• Failed: {{$json.failed}}\n• Skipped: {{$json.skipped}}\n\n*Errors:*\n{{$json.errors}}",
-        "otherOptions": {}
+        "jsCode": "// Log successful run\nconst result = $input.first().json;\n\nreturn {\n  status: 'success',\n  timestamp: new Date().toISOString(),\n  processed: result.processed || 0,\n  success: result.success || 0,\n  failed: result.failed || 0,\n  skipped: result.skipped || 0\n};"
       },
-      "id": "slack-alert",
-      "name": "Slack - Alert Failures",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [1000, 200],
-      "credentials": {
-        "slackApi": {
-          "id": "slack-creds",
-          "name": "Slack API"
-        }
-      }
+      "id": "log-success",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 350]
     },
     {
-      "parameters": {},
-      "id": "no-op-success",
-      "name": "All Good",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [1000, 400]
+      "parameters": {
+        "jsCode": "// Log failures for review\nconst result = $input.first().json;\n\nconsole.error('Posting failures:', JSON.stringify(result.errors || []));\n\nreturn {\n  status: 'has_failures',\n  timestamp: new Date().toISOString(),\n  processed: result.processed || 0,\n  success: result.success || 0,\n  failed: result.failed || 0,\n  skipped: result.skipped || 0,\n  errors: result.errors || []\n};"
+      },
+      "id": "log-failures",
+      "name": "Log Failures",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 150]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log API error\nconst error = $input.first().json;\n\nconsole.error('Posting API error:', JSON.stringify(error));\n\nreturn {\n  status: 'api_error',\n  timestamp: new Date().toISOString(),\n  error: error.message || error.detail || 'Unknown API error'\n};"
+      },
+      "id": "log-api-error",
+      "name": "Log API Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 450]
     }
   ],
   "connections": {
-    "Schedule - 10am, 2pm, 6pm": {
+    "Schedule 3x Daily": {
       "main": [
         [
           {
@@ -128,6 +137,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Log API Error",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -135,14 +151,14 @@
       "main": [
         [
           {
-            "node": "Slack - Alert Failures",
+            "node": "Log Failures",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "All Good",
+            "node": "Log Success",
             "type": "main",
             "index": 0
           }
@@ -151,12 +167,19 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York"
   },
   "staticData": null,
   "tags": [
     {
       "name": "reddit-growth"
     }
-  ]
+  ],
+  "pinData": {},
+  "meta": {
+    "notes": "Processes scheduled posts 3x daily at optimal Reddit engagement times (9:15am, 1:30pm, 6:45pm ET). Staggered minutes avoid exact-hour bot patterns."
+  }
 }

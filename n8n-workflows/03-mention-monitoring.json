@@ -1,5 +1,5 @@
 {
-  "name": "Reddit Growth - Mention Monitoring (In-House)",
+  "name": "Reddit Growth - Mention Monitoring",
   "nodes": [
     {
       "parameters": {
@@ -7,21 +7,22 @@
           "interval": [
             {
               "field": "minutes",
-              "minutesInterval": 30
+              "minutesInterval": 20
             }
           ]
         }
       },
       "id": "schedule-trigger",
-      "name": "Every 30 Minutes",
+      "name": "Every 20 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.1,
+      "typeVersion": 1.2,
       "position": [250, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.WORKER_URL}}/mentions/scan",
+        "url": "={{ $env.WORKER_URL }}/mentions/scan",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -39,10 +40,11 @@
         }
       },
       "id": "scan-keywords",
-      "name": "Scan Reddit for Keywords",
+      "name": "Scan Reddit",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [500, 300]
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -55,7 +57,7 @@
           "conditions": [
             {
               "id": "has-new-mentions",
-              "leftValue": "={{$json.total_new_mentions || $json.mentions_new || 0}}",
+              "leftValue": "={{ $json.total_new_mentions || $json.mentions_new || 0 }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -68,15 +70,16 @@
         "options": {}
       },
       "id": "has-new-mentions",
-      "name": "Has New Mentions?",
+      "name": "New Mentions?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [750, 300]
+      "position": [750, 250]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.WORKER_URL}}/mentions/process",
+        "url": "={{ $env.WORKER_URL }}/mentions/process",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -94,87 +97,113 @@
         }
       },
       "id": "process-mentions",
-      "name": "Process & Reply to Mentions",
+      "name": "Process Mentions",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [1000, 200]
+      "typeVersion": 4.2,
+      "position": [1000, 150],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Log the scan results\nconst scan = $input.first().json;\n\nreturn {\n  summary: `Scanned ${scan.clients_scanned || 1} client(s). Found ${scan.total_mentions_found || scan.mentions_found || 0} mentions, ${scan.total_new_mentions || scan.mentions_new || 0} new.`,\n  clients_scanned: scan.clients_scanned || 1,\n  total_found: scan.total_mentions_found || scan.mentions_found || 0,\n  new_mentions: scan.total_new_mentions || scan.mentions_new || 0,\n  scan_time: scan.scan_time || new Date().toISOString()\n};"
+        "jsCode": "// Log successful processing\nconst scan = $('Scan Reddit').first().json;\nconst process = $input.first().json;\n\nreturn {\n  status: 'processed',\n  timestamp: new Date().toISOString(),\n  scan: {\n    clients_scanned: scan.clients_scanned || 1,\n    mentions_found: scan.total_mentions_found || scan.mentions_found || 0,\n    new_mentions: scan.total_new_mentions || scan.mentions_new || 0\n  },\n  replies: {\n    processed: process.processed || 0,\n    replied: process.replied || 0,\n    skipped: process.skipped || 0,\n    failed: process.failed || 0\n  }\n};"
       },
-      "id": "log-results",
-      "name": "Log Scan Results",
+      "id": "log-processed",
+      "name": "Log Processed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 400]
+      "position": [1250, 100]
     },
     {
       "parameters": {
-        "channel": "#reddit-growth-alerts",
-        "text": "=:mag: *Reddit Scan Complete*\n\n{{$json.summary}}\n\nNew mentions will be processed for replies.",
-        "otherOptions": {}
+        "jsCode": "// Log process errors\nconst error = $input.first().json;\n\nconsole.error('Mention processing error:', JSON.stringify(error));\n\nreturn {\n  status: 'process_error',\n  timestamp: new Date().toISOString(),\n  error: error.message || error.detail || 'Unknown error'\n};"
       },
-      "id": "slack-notify",
-      "name": "Slack Notification (Optional)",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [1250, 200],
-      "credentials": {
-        "slackApi": {
-          "id": "slack-creds",
-          "name": "Slack API"
-        }
+      "id": "log-process-error",
+      "name": "Log Process Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 250]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log no new mentions\nconst scan = $input.first().json;\n\nreturn {\n  status: 'no_new_mentions',\n  timestamp: new Date().toISOString(),\n  clients_scanned: scan.clients_scanned || 1,\n  total_found: scan.total_mentions_found || scan.mentions_found || 0,\n  new_mentions: 0\n};"
       },
-      "disabled": true
+      "id": "log-no-mentions",
+      "name": "Log No New",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log scan error\nconst error = $input.first().json;\n\nconsole.error('Reddit scan error:', JSON.stringify(error));\n\nreturn {\n  status: 'scan_error',\n  timestamp: new Date().toISOString(),\n  error: error.message || error.detail || 'Unknown error'\n};"
+      },
+      "id": "log-scan-error",
+      "name": "Log Scan Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 450]
     }
   ],
   "connections": {
-    "Every 30 Minutes": {
+    "Every 20 Minutes": {
       "main": [
         [
           {
-            "node": "Scan Reddit for Keywords",
+            "node": "Scan Reddit",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Scan Reddit for Keywords": {
+    "Scan Reddit": {
       "main": [
         [
           {
-            "node": "Has New Mentions?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has New Mentions?": {
-      "main": [
-        [
-          {
-            "node": "Process & Reply to Mentions",
+            "node": "New Mentions?",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Log Scan Results",
+            "node": "Log Scan Error",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process & Reply to Mentions": {
+    "New Mentions?": {
       "main": [
         [
           {
-            "node": "Slack Notification (Optional)",
+            "node": "Process Mentions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No New",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Mentions": {
+      "main": [
+        [
+          {
+            "node": "Log Processed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Process Error",
             "type": "main",
             "index": 0
           }
@@ -183,15 +212,21 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
   "tags": [
     {
       "name": "reddit-growth"
+    },
+    {
+      "name": "core"
     }
   ],
+  "pinData": {},
   "meta": {
-    "notes": "This workflow uses our in-house Reddit monitoring instead of F5Bot. It calls /mentions/scan which searches Reddit for all client keywords, scores mentions with AI, and saves them to the database. No F5Bot subscription required!"
+    "notes": "CORE WORKFLOW: Scans Reddit every 20 minutes for keyword mentions across all clients. When new mentions are found, automatically generates AI replies and posts them. This is the primary growth driver."
   }
 }

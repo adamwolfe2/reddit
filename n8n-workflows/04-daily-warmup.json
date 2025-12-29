@@ -7,21 +7,23 @@
           "interval": [
             {
               "field": "hours",
-              "triggerAtHour": 9
+              "triggerAtHour": 8,
+              "triggerAtMinute": 30
             }
           ]
         }
       },
       "id": "schedule-trigger",
-      "name": "Daily at 9am",
+      "name": "Daily 8:30am",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.1,
+      "typeVersion": 1.2,
       "position": [250, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.WORKER_URL}}/warmup/process",
+        "url": "={{ $env.WORKER_URL }}/warmup/process",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -36,28 +38,11 @@
         }
       },
       "id": "warmup-accounts",
-      "name": "Process Account Warmup",
+      "name": "Process Warmup",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [500, 300]
-    },
-    {
-      "parameters": {
-        "channel": "#reddit-ops",
-        "text": "=🔥 *Daily Warmup Complete*\n\n• Accounts processed: {{$json.processed}}\n• Actions performed: {{$json.actions_performed}}\n• Fully warmed: {{$json.fully_warmed}}\n• Errors: {{$json.errors.length}}\n\n*Stage Distribution:*\n{{JSON.stringify($json.stages, null, 2)}}",
-        "otherOptions": {}
-      },
-      "id": "slack-summary",
-      "name": "Slack - Daily Summary",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [750, 300],
-      "credentials": {
-        "slackApi": {
-          "id": "slack-creds",
-          "name": "Slack API"
-        }
-      }
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -70,7 +55,7 @@
           "conditions": [
             {
               "id": "check-new-ready",
-              "leftValue": "={{$json.fully_warmed}}",
+              "leftValue": "={{ $json.fully_warmed || 0 }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -83,84 +68,105 @@
         "options": {}
       },
       "id": "check-new-ready",
-      "name": "New Accounts Ready?",
+      "name": "New Ready?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1000, 300]
+      "position": [750, 250]
     },
     {
       "parameters": {
-        "channel": "#reddit-ops",
-        "text": "=🎉 *Accounts Fully Warmed Up!*\n\n{{$json.fully_warmed}} account(s) are now ready for marketing activities!",
-        "otherOptions": {}
+        "jsCode": "// Log accounts now ready for marketing\nconst result = $input.first().json;\n\nconsole.log('ACCOUNTS READY:', result.fully_warmed);\n\nreturn {\n  status: 'accounts_ready',\n  timestamp: new Date().toISOString(),\n  newly_ready: result.fully_warmed,\n  processed: result.processed || 0,\n  actions_performed: result.actions_performed || 0,\n  stages: result.stages || {},\n  message: `${result.fully_warmed} account(s) are now fully warmed and ready for marketing!`\n};"
       },
-      "id": "slack-ready-alert",
-      "name": "Slack - Ready Alert",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [1250, 200],
-      "credentials": {
-        "slackApi": {
-          "id": "slack-creds",
-          "name": "Slack API"
-        }
-      }
+      "id": "log-ready",
+      "name": "Log Ready",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 150]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log warmup progress\nconst result = $input.first().json;\n\nreturn {\n  status: 'warmup_complete',\n  timestamp: new Date().toISOString(),\n  processed: result.processed || 0,\n  actions_performed: result.actions_performed || 0,\n  stages: result.stages || {},\n  errors: result.errors || []\n};"
+      },
+      "id": "log-progress",
+      "name": "Log Progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log API error\nconst error = $input.first().json;\n\nconsole.error('Warmup API error:', JSON.stringify(error));\n\nreturn {\n  status: 'warmup_error',\n  timestamp: new Date().toISOString(),\n  error: error.message || error.detail || 'Unknown error'\n};"
+      },
+      "id": "log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 450]
     }
   ],
   "connections": {
-    "Daily at 9am": {
+    "Daily 8:30am": {
       "main": [
         [
           {
-            "node": "Process Account Warmup",
+            "node": "Process Warmup",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process Account Warmup": {
+    "Process Warmup": {
       "main": [
         [
           {
-            "node": "Slack - Daily Summary",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Slack - Daily Summary": {
-      "main": [
-        [
-          {
-            "node": "New Accounts Ready?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "New Accounts Ready?": {
-      "main": [
-        [
-          {
-            "node": "Slack - Ready Alert",
+            "node": "New Ready?",
             "type": "main",
             "index": 0
           }
         ],
-        []
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Ready?": {
+      "main": [
+        [
+          {
+            "node": "Log Ready",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York"
   },
   "staticData": null,
   "tags": [
     {
       "name": "reddit-growth"
     }
-  ]
+  ],
+  "pinData": {},
+  "meta": {
+    "notes": "Daily account warmup at 8:30am ET. Progresses accounts through 5 warmup stages over ~14 days. Logs when accounts become ready for marketing."
+  }
 }

@@ -9,16 +9,55 @@
         "options": {}
       },
       "id": "webhook-trigger",
-      "name": "Webhook - Client Signup",
+      "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1.1,
+      "typeVersion": 2,
       "position": [250, 300],
       "webhookId": "client-onboard"
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-client-id",
+              "leftValue": "={{ $json.body.client_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "validate-website",
+              "leftValue": "={{ $json.body.website_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
         "method": "POST",
-        "url": "={{$env.WORKER_URL}}/onboard",
+        "url": "={{ $env.WORKER_URL }}/onboard",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -30,52 +69,85 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"client_id\": \"{{$json.body.client_id}}\",\n  \"website_url\": \"{{$json.body.website_url}}\"\n}",
+        "jsonBody": "={\n  \"client_id\": \"{{ $('Webhook').item.json.body.client_id }}\",\n  \"website_url\": \"{{ $('Webhook').item.json.body.website_url }}\"\n}",
         "options": {
-          "timeout": 30000
+          "timeout": 120000
         }
       },
       "id": "http-onboard",
       "name": "Call Onboarding API",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [500, 300]
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Onboarding started\",\n  \"client_id\": \"{{$json.client_id}}\"\n}",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Onboarding completed\",\n  \"client_id\": \"{{ $json.client_id }}\",\n  \"keywords_generated\": {{ $json.keywords_generated || 0 }},\n  \"subreddits_discovered\": {{ $json.subreddits_discovered || 0 }}\n}",
         "options": {
-          "responseCode": 202
+          "responseCode": 200
         }
       },
       "id": "respond-success",
-      "name": "Respond - Success",
+      "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [750, 300]
+      "typeVersion": 1.1,
+      "position": [950, 150]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={\n  \"success\": false,\n  \"error\": \"{{$json.error}}\"\n}",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"Missing required fields: client_id and website_url are required\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"{{ $json.message || $json.detail || 'Onboarding failed' }}\"\n}",
         "options": {
           "responseCode": 500
         }
       },
       "id": "respond-error",
-      "name": "Respond - Error",
+      "name": "Respond API Error",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [750, 450]
+      "typeVersion": 1.1,
+      "position": [950, 300]
     }
   ],
   "connections": {
-    "Webhook - Client Signup": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
       "main": [
         [
           {
             "node": "Call Onboarding API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
             "type": "main",
             "index": 0
           }
@@ -86,7 +158,14 @@
       "main": [
         [
           {
-            "node": "Respond - Success",
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond API Error",
             "type": "main",
             "index": 0
           }
@@ -95,17 +174,18 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
   "tags": [
     {
-      "name": "reddit-growth",
-      "createdAt": "2024-12-27T00:00:00.000Z",
-      "updatedAt": "2024-12-27T00:00:00.000Z"
+      "name": "reddit-growth"
     }
   ],
-  "triggerCount": 0,
-  "updatedAt": "2024-12-27T00:00:00.000Z",
-  "versionId": "1"
+  "pinData": {},
+  "meta": {
+    "notes": "Webhook-triggered onboarding. POST to /webhook/client-onboard with body: {client_id: 'uuid', website_url: 'https://...'}"
+  }
 }

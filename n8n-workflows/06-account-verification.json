@@ -8,21 +8,23 @@
             {
               "field": "weeks",
               "triggerAtDay": 1,
-              "triggerAtHour": 8
+              "triggerAtHour": 7,
+              "triggerAtMinute": 30
             }
           ]
         }
       },
       "id": "schedule-trigger",
-      "name": "Weekly Monday 8am",
+      "name": "Monday 7:30am",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.1,
+      "typeVersion": 1.2,
       "position": [250, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.WORKER_URL}}/accounts/verify-all",
+        "url": "={{ $env.WORKER_URL }}/accounts/verify-all",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -37,10 +39,11 @@
         }
       },
       "id": "verify-accounts",
-      "name": "Verify All Accounts",
+      "name": "Verify Accounts",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [500, 300]
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -53,7 +56,7 @@
           "conditions": [
             {
               "id": "check-issues",
-              "leftValue": "={{$json.suspended + $json.failed}}",
+              "leftValue": "={{ ($json.suspended || 0) + ($json.failed || 0) }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -69,62 +72,63 @@
       "name": "Any Issues?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [750, 300]
+      "position": [750, 250]
     },
     {
       "parameters": {
-        "channel": "#reddit-alerts",
-        "text": "=🚨 *Account Verification Alert*\n\n• Verified: {{$json.verified}}\n• Suspended: {{$json.suspended}}\n• Failed: {{$json.failed}}\n\n*Issues:*\n{{JSON.stringify($json.errors, null, 2)}}",
-        "otherOptions": {}
+        "jsCode": "// Log account issues - CRITICAL\nconst result = $input.first().json;\n\nconsole.error('ACCOUNT ISSUES DETECTED:', JSON.stringify({\n  suspended: result.suspended,\n  failed: result.failed,\n  errors: result.errors\n}));\n\nreturn {\n  status: 'issues_detected',\n  severity: 'critical',\n  timestamp: new Date().toISOString(),\n  verified: result.verified || 0,\n  suspended: result.suspended || 0,\n  failed: result.failed || 0,\n  errors: result.errors || [],\n  message: `WARNING: ${result.suspended || 0} suspended, ${result.failed || 0} failed accounts`\n};"
       },
-      "id": "slack-alert",
-      "name": "Slack - Issues Alert",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [1000, 200],
-      "credentials": {
-        "slackApi": {
-          "id": "slack-creds",
-          "name": "Slack API"
-        }
-      }
+      "id": "log-issues",
+      "name": "Log Issues",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 150]
     },
     {
       "parameters": {
-        "channel": "#reddit-ops",
-        "text": "=✅ *Weekly Account Verification Complete*\n\nAll {{$json.verified}} accounts verified successfully!",
-        "otherOptions": {}
+        "jsCode": "// Log all accounts verified successfully\nconst result = $input.first().json;\n\nreturn {\n  status: 'all_verified',\n  timestamp: new Date().toISOString(),\n  verified: result.verified || 0,\n  message: `All ${result.verified || 0} accounts verified successfully`\n};"
       },
-      "id": "slack-success",
-      "name": "Slack - All Good",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.1,
-      "position": [1000, 400],
-      "credentials": {
-        "slackApi": {
-          "id": "slack-creds",
-          "name": "Slack API"
-        }
-      }
+      "id": "log-success",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log API error\nconst error = $input.first().json;\n\nconsole.error('Account verification API error:', JSON.stringify(error));\n\nreturn {\n  status: 'verification_error',\n  timestamp: new Date().toISOString(),\n  error: error.message || error.detail || 'Unknown error'\n};"
+      },
+      "id": "log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 450]
     }
   ],
   "connections": {
-    "Weekly Monday 8am": {
+    "Monday 7:30am": {
       "main": [
         [
           {
-            "node": "Verify All Accounts",
+            "node": "Verify Accounts",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Verify All Accounts": {
+    "Verify Accounts": {
       "main": [
         [
           {
             "node": "Any Issues?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Error",
             "type": "main",
             "index": 0
           }
@@ -135,14 +139,14 @@
       "main": [
         [
           {
-            "node": "Slack - Issues Alert",
+            "node": "Log Issues",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Slack - All Good",
+            "node": "Log Success",
             "type": "main",
             "index": 0
           }
@@ -151,12 +155,19 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York"
   },
   "staticData": null,
   "tags": [
     {
       "name": "reddit-growth"
     }
-  ]
+  ],
+  "pinData": {},
+  "meta": {
+    "notes": "Weekly health check every Monday 7:30am ET. Verifies all Reddit account credentials are still valid, detects suspensions/shadowbans. Check N8N execution logs for issues."
+  }
 }
