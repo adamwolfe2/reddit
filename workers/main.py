@@ -82,6 +82,60 @@ class GenerateKeywordsRequest(BaseModel):
     client_id: str
 
 
+class ScanKeywordsRequest(BaseModel):
+    client_id: Optional[str] = None  # If None, scan all clients
+    limit_per_keyword: int = 25
+    time_filter: str = "day"  # hour, day, week, month
+    include_comments: bool = True
+
+
+class CreateKeywordRequest(BaseModel):
+    client_id: str
+    keyword: str
+    keyword_type: str = "product"  # product, competitor, problem, industry
+    priority: int = 5  # 1-10
+    is_active: bool = True
+
+
+class BulkCreateKeywordsRequest(BaseModel):
+    client_id: str
+    keywords: List[Dict[str, Any]]  # List of keyword objects
+
+
+class UpdateKeywordRequest(BaseModel):
+    keyword: Optional[str] = None
+    keyword_type: Optional[str] = None
+    priority: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class FindOpportunitiesRequest(BaseModel):
+    client_id: str
+    limit: int = 50
+
+
+class AnalyzeSubredditRequest(BaseModel):
+    subreddit_name: str
+
+
+class DiscoverSubredditsRequest(BaseModel):
+    client_id: str
+    search_terms: Optional[List[str]] = None
+    limit: int = 20
+
+
+class AddSubredditRequest(BaseModel):
+    client_id: str
+    name: str
+    category: str = "audience"  # audience, competitor, industry
+    relevance_score: float = 0.5
+    is_active: bool = True
+    is_approved: bool = False
+    minimum_karma: int = 0
+    minimum_account_age_days: int = 0
+    posting_rules: Optional[str] = None
+
+
 # =============================================================================
 # LAZY LOADING HELPERS
 # =============================================================================
@@ -546,6 +600,224 @@ async def get_keywords(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/keywords")
+async def create_keyword(request: CreateKeywordRequest):
+    """Create a single keyword for a client"""
+    try:
+        db = get_db()
+
+        # Verify client exists
+        client = db.get_client(request.client_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Create keyword
+        keyword = db.create_keywords([{
+            "client_id": request.client_id,
+            "organization_id": client["organization_id"],
+            "keyword": request.keyword,
+            "keyword_type": request.keyword_type,
+            "priority": request.priority,
+            "is_active": request.is_active,
+        }])
+
+        return {"keyword": keyword[0] if keyword else None}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create keyword failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/keywords/bulk")
+async def create_keywords_bulk(request: BulkCreateKeywordsRequest):
+    """Bulk create keywords for a client"""
+    try:
+        db = get_db()
+
+        # Verify client exists
+        client = db.get_client(request.client_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Prepare keywords
+        keywords_to_create = []
+        for kw in request.keywords:
+            keywords_to_create.append({
+                "client_id": request.client_id,
+                "organization_id": client["organization_id"],
+                "keyword": kw.get("keyword"),
+                "keyword_type": kw.get("keyword_type", "product"),
+                "priority": kw.get("priority", 5),
+                "is_active": kw.get("is_active", True),
+            })
+
+        # Create keywords
+        created = db.create_keywords(keywords_to_create)
+
+        return {
+            "created": len(created) if created else 0,
+            "keywords": created,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bulk create keywords failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/keywords/{keyword_id}")
+async def update_keyword(keyword_id: str, request: UpdateKeywordRequest):
+    """Update a keyword"""
+    try:
+        db = get_db()
+
+        # Build update data (only include non-None values)
+        update_data = {}
+        if request.keyword is not None:
+            update_data["keyword"] = request.keyword
+        if request.keyword_type is not None:
+            update_data["keyword_type"] = request.keyword_type
+        if request.priority is not None:
+            update_data["priority"] = request.priority
+        if request.is_active is not None:
+            update_data["is_active"] = request.is_active
+
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        keyword = db.update_keyword(keyword_id, update_data)
+
+        return {"keyword": keyword}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update keyword failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/keywords/{keyword_id}")
+async def delete_keyword(keyword_id: str):
+    """Delete a keyword"""
+    try:
+        db = get_db()
+        db.client.table("keywords").delete().eq("id", keyword_id).execute()
+        return {"deleted": True, "keyword_id": keyword_id}
+    except Exception as e:
+        logger.error(f"Delete keyword failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# MONITORING ENDPOINTS (In-house F5Bot replacement)
+# =============================================================================
+
+@app.post("/mentions/scan")
+async def scan_keywords(request: ScanKeywordsRequest):
+    """
+    Scan Reddit for keyword mentions.
+    This is the core monitoring endpoint that replaces F5Bot.
+    Can scan for a specific client or all active clients.
+    """
+    try:
+        from reddit.monitor import scan_client_keywords, scan_all_keywords
+
+        if request.client_id:
+            # Scan specific client
+            result = await scan_client_keywords(
+                client_id=request.client_id,
+                limit_per_keyword=request.limit_per_keyword,
+                time_filter=request.time_filter,
+                include_comments=request.include_comments,
+            )
+        else:
+            # Scan all active clients
+            result = await scan_all_keywords(
+                limit_per_keyword=request.limit_per_keyword,
+                time_filter=request.time_filter,
+            )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Keyword scan failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/mentions/opportunities")
+async def find_mention_opportunities(request: FindOpportunitiesRequest):
+    """
+    Find high-intent posts that are opportunities for engagement.
+    Searches for posts with buying signals like "looking for", "recommend", etc.
+    """
+    try:
+        from reddit.monitor import find_opportunities
+
+        opportunities = await find_opportunities(
+            client_id=request.client_id,
+            limit=request.limit,
+        )
+
+        return {
+            "client_id": request.client_id,
+            "opportunities": opportunities,
+            "total": len(opportunities),
+        }
+
+    except Exception as e:
+        logger.error(f"Find opportunities failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/mentions/stats/{client_id}")
+async def get_mention_stats(client_id: str, days: int = Query(default=30, le=365)):
+    """Get mention statistics for a client"""
+    try:
+        db = get_db()
+
+        # Get all mentions for the period
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+        result = db.client.table("mentions").select("*").eq(
+            "client_id", client_id
+        ).gte("detected_at", cutoff).execute()
+
+        mentions = result.data if result.data else []
+
+        # Calculate stats
+        total = len(mentions)
+        replied = sum(1 for m in mentions if m.get("replied"))
+        high_relevance = sum(1 for m in mentions if (m.get("relevance_score") or 0) >= 0.7)
+        by_subreddit = {}
+        by_keyword = {}
+
+        for m in mentions:
+            sub = m.get("subreddit", "unknown")
+            by_subreddit[sub] = by_subreddit.get(sub, 0) + 1
+
+            for kw in m.get("matched_keywords", []):
+                by_keyword[kw] = by_keyword.get(kw, 0) + 1
+
+        return {
+            "client_id": client_id,
+            "period_days": days,
+            "total_mentions": total,
+            "replied": replied,
+            "reply_rate": replied / total if total > 0 else 0,
+            "high_relevance": high_relevance,
+            "by_subreddit": dict(sorted(by_subreddit.items(), key=lambda x: -x[1])[:20]),
+            "by_keyword": dict(sorted(by_keyword.items(), key=lambda x: -x[1])[:20]),
+        }
+
+    except Exception as e:
+        logger.error(f"Get mention stats failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # =============================================================================
 # SUBREDDITS ENDPOINTS
 # =============================================================================
@@ -567,7 +839,7 @@ async def get_subreddits(
 
 @app.post("/subreddits/discover/{client_id}")
 async def discover_subreddits(client_id: str):
-    """Discover new subreddits for a client"""
+    """Discover new subreddits for a client using AI"""
     try:
         from ai.keywords import SubredditDiscovery
         sd = SubredditDiscovery()
@@ -579,6 +851,116 @@ async def discover_subreddits(client_id: str):
         }
     except Exception as e:
         logger.error(f"Subreddit discovery failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/subreddits/discover-reddit/{client_id}")
+async def discover_subreddits_from_reddit(request: DiscoverSubredditsRequest):
+    """Discover subreddits by searching Reddit directly"""
+    try:
+        from reddit.monitor import discover_subreddits as reddit_discover
+
+        subreddits = await reddit_discover(
+            client_id=request.client_id,
+            search_terms=request.search_terms,
+            limit=request.limit,
+        )
+
+        return {
+            "discovered": len(subreddits),
+            "subreddits": subreddits,
+        }
+    except Exception as e:
+        logger.error(f"Reddit subreddit discovery failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/subreddits/analyze")
+async def analyze_subreddit_endpoint(request: AnalyzeSubredditRequest):
+    """Analyze a subreddit for marketing suitability"""
+    try:
+        from reddit.monitor import analyze_subreddit
+
+        analysis = await analyze_subreddit(request.subreddit_name)
+
+        return {"analysis": analysis}
+
+    except Exception as e:
+        logger.error(f"Subreddit analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/subreddits")
+async def add_subreddit(request: AddSubredditRequest):
+    """Add a subreddit for a client"""
+    try:
+        db = get_db()
+
+        # Verify client exists
+        client = db.get_client(request.client_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Check if subreddit already exists for this client
+        existing = db.get_subreddit_by_name(request.client_id, request.name)
+        if existing:
+            raise HTTPException(status_code=400, detail="Subreddit already exists for this client")
+
+        # Create subreddit
+        subreddit = db.create_subreddits([{
+            "client_id": request.client_id,
+            "organization_id": client["organization_id"],
+            "name": request.name,
+            "category": request.category,
+            "relevance_score": request.relevance_score,
+            "is_active": request.is_active,
+            "is_approved": request.is_approved,
+            "minimum_karma": request.minimum_karma,
+            "minimum_account_age_days": request.minimum_account_age_days,
+            "posting_rules": request.posting_rules,
+        }])
+
+        return {"subreddit": subreddit[0] if subreddit else None}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Add subreddit failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/subreddits/{subreddit_id}")
+async def update_subreddit_endpoint(subreddit_id: str, data: Dict[str, Any]):
+    """Update a subreddit"""
+    try:
+        db = get_db()
+
+        # Filter out None values
+        update_data = {k: v for k, v in data.items() if v is not None}
+
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        subreddit = db.update_subreddit(subreddit_id, update_data)
+
+        return {"subreddit": subreddit}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update subreddit failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/subreddits/{subreddit_id}")
+async def delete_subreddit(subreddit_id: str):
+    """Delete a subreddit"""
+    try:
+        db = get_db()
+        db.client.table("subreddits").delete().eq("id", subreddit_id).execute()
+        return {"deleted": True, "subreddit_id": subreddit_id}
+    except Exception as e:
+        logger.error(f"Delete subreddit failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
