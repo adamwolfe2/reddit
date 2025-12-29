@@ -6,9 +6,9 @@ from typing import Optional, Dict
 from datetime import datetime
 import logging
 
-from config import config
-from database.supabase_client import db
-from utils.encryption import decrypt_password
+from workers.config import config
+from workers.database.supabase_client import db
+from workers.utils.encryption import decrypt_password
 
 logger = logging.getLogger(__name__)
 

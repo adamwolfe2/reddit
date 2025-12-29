@@ -4,7 +4,7 @@ Password encryption utilities using Fernet symmetric encryption
 from cryptography.fernet import Fernet, InvalidToken
 from typing import Optional
 
-from config import config
+from workers.config import config
 
 
 def get_fernet() -> Fernet:

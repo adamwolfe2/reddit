@@ -148,7 +148,7 @@ def get_db():
     """Lazy load database client"""
     global _db
     if _db is None:
-        from database.supabase_client import db
+        from workers.database.supabase_client import db
         _db = db
     return _db
 
@@ -157,7 +157,7 @@ def get_config():
     """Lazy load config"""
     global _config
     if _config is None:
-        from config import config
+        from workers.config import config
         _config = config
     return _config
 
@@ -216,7 +216,7 @@ async def onboard_client(request: OnboardRequest):
 
         # Scrape website
         try:
-            from scraper.website import WebsiteScraper
+            from workers.scraper.website import WebsiteScraper
             scraper = WebsiteScraper()
             product_info = await scraper.scrape_and_extract(request.website_url)
 
@@ -231,7 +231,7 @@ async def onboard_client(request: OnboardRequest):
 
         # Generate keywords
         try:
-            from ai.keywords import KeywordGenerator
+            from workers.ai.keywords import KeywordGenerator
             kg = KeywordGenerator()
             keywords = await kg.generate_keywords(request.client_id)
             logger.info(f"Generated {len(keywords)} keywords")
@@ -241,7 +241,7 @@ async def onboard_client(request: OnboardRequest):
 
         # Discover subreddits
         try:
-            from ai.keywords import SubredditDiscovery
+            from workers.ai.keywords import SubredditDiscovery
             sd = SubredditDiscovery()
             subreddits = await sd.discover_subreddits(request.client_id)
             logger.info(f"Discovered {len(subreddits)} subreddits")
@@ -286,7 +286,7 @@ async def onboard_client(request: OnboardRequest):
 async def process_posts(request: ProcessPostsRequest):
     """Process pending scheduled posts"""
     try:
-        from reddit.post import process_pending_posts
+        from workers.reddit.post import process_pending_posts
         result = await process_pending_posts(limit=request.limit)
         return result
     except Exception as e:
@@ -334,7 +334,7 @@ async def generate_post(request: GeneratePostRequest):
             raise HTTPException(status_code=404, detail="Subreddit not found")
 
         # Generate content
-        from ai.content import ContentGenerator
+        from workers.ai.content import ContentGenerator
         cg = ContentGenerator()
         generated = await cg.generate_post_content(
             client=client,
@@ -388,7 +388,7 @@ async def get_posts(
 async def process_mentions(request: ProcessMentionsRequest):
     """Process unreplied mentions"""
     try:
-        from reddit.reply import process_unreplied_mentions
+        from workers.reddit.reply import process_unreplied_mentions
         result = await process_unreplied_mentions(
             client_id=request.client_id,
             limit=request.limit,
@@ -403,7 +403,7 @@ async def process_mentions(request: ProcessMentionsRequest):
 async def score_mention(request: ScoreMentionRequest):
     """Score a mention for relevance"""
     try:
-        from ai.scoring import RelevanceScorer
+        from workers.ai.scoring import RelevanceScorer
         scorer = RelevanceScorer()
 
         score = await scorer.score_mention(
@@ -443,7 +443,7 @@ async def get_mentions(
 async def process_warmup():
     """Process account warmup actions"""
     try:
-        from reddit.warmup import process_warmup_accounts
+        from workers.reddit.warmup import process_warmup_accounts
         result = await process_warmup_accounts()
         return result
     except Exception as e:
@@ -513,7 +513,7 @@ async def get_warmup_status(account_id: str):
 async def sync_metrics():
     """Sync metrics for all posts"""
     try:
-        from reddit.metrics import sync_all_metrics
+        from workers.reddit.metrics import sync_all_metrics
         result = await sync_all_metrics()
         return result
     except Exception as e:
@@ -572,7 +572,7 @@ async def get_metrics(
 async def generate_keywords(request: GenerateKeywordsRequest):
     """Generate keywords for a client"""
     try:
-        from ai.keywords import KeywordGenerator
+        from workers.ai.keywords import KeywordGenerator
         kg = KeywordGenerator()
         keywords = await kg.generate_keywords(request.client_id)
 
@@ -723,7 +723,7 @@ async def scan_keywords(request: ScanKeywordsRequest):
     Can scan for a specific client or all active clients.
     """
     try:
-        from reddit.monitor import scan_client_keywords, scan_all_keywords
+        from workers.reddit.monitor import scan_client_keywords, scan_all_keywords
 
         if request.client_id:
             # Scan specific client
@@ -754,7 +754,7 @@ async def find_mention_opportunities(request: FindOpportunitiesRequest):
     Searches for posts with buying signals like "looking for", "recommend", etc.
     """
     try:
-        from reddit.monitor import find_opportunities
+        from workers.reddit.monitor import find_opportunities
 
         opportunities = await find_opportunities(
             client_id=request.client_id,
@@ -841,7 +841,7 @@ async def get_subreddits(
 async def discover_subreddits(client_id: str):
     """Discover new subreddits for a client using AI"""
     try:
-        from ai.keywords import SubredditDiscovery
+        from workers.ai.keywords import SubredditDiscovery
         sd = SubredditDiscovery()
         subreddits = await sd.discover_subreddits(client_id)
 
@@ -858,7 +858,7 @@ async def discover_subreddits(client_id: str):
 async def discover_subreddits_from_reddit(request: DiscoverSubredditsRequest):
     """Discover subreddits by searching Reddit directly"""
     try:
-        from reddit.monitor import discover_subreddits as reddit_discover
+        from workers.reddit.monitor import discover_subreddits as reddit_discover
 
         subreddits = await reddit_discover(
             client_id=request.client_id,
@@ -879,7 +879,7 @@ async def discover_subreddits_from_reddit(request: DiscoverSubredditsRequest):
 async def analyze_subreddit_endpoint(request: AnalyzeSubredditRequest):
     """Analyze a subreddit for marketing suitability"""
     try:
-        from reddit.monitor import analyze_subreddit
+        from workers.reddit.monitor import analyze_subreddit
 
         analysis = await analyze_subreddit(request.subreddit_name)
 
@@ -972,7 +972,7 @@ async def delete_subreddit(subreddit_id: str):
 async def verify_account(request: VerifyAccountRequest):
     """Verify a Reddit account"""
     try:
-        from reddit.auth import RedditClient
+        from workers.reddit.auth import RedditClient
 
         db = get_db()
         account = db.get_account(request.account_id)
@@ -1007,7 +1007,7 @@ async def verify_account(request: VerifyAccountRequest):
 async def verify_all_accounts():
     """Verify all accounts"""
     try:
-        from reddit.auth import verify_all_accounts
+        from workers.reddit.auth import verify_all_accounts
         result = await verify_all_accounts()
         return result
     except Exception as e:
@@ -1083,7 +1083,7 @@ async def generate_content_ideas(
         if not client:
             raise HTTPException(status_code=404, detail="Client not found")
 
-        from ai.content import ContentGenerator
+        from workers.ai.content import ContentGenerator
         cg = ContentGenerator()
 
         ideas = await cg.generate_post_ideas(

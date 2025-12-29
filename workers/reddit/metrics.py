@@ -6,8 +6,8 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import logging
 
-from reddit.auth import RedditClient
-from database.supabase_client import db
+from workers.reddit.auth import RedditClient
+from workers.database.supabase_client import db
 
 logger = logging.getLogger(__name__)
 

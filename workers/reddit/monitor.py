@@ -46,20 +46,20 @@ class RedditMonitor:
     def db(self):
         """Lazy load database client"""
         if self._db is None:
-            from database.supabase_client import db
+            from workers.database.supabase_client import db
             self._db = db
         return self._db
 
     def _get_reddit_client(self) -> praw.Reddit:
         """Get a Reddit client for searching (read-only operations)"""
         if self._reddit is None:
-            from config import config
+            from workers.config import config
             # Use app-only auth for search (no user context needed)
             # This requires at least one account's credentials
             accounts = self.db.get_accounts_for_warmup()
             if not accounts:
                 # Try to get any active account
-                from database.supabase_client import db
+                from workers.database.supabase_client import db
                 result = db.client.table("reddit_accounts").select("*").limit(1).execute()
                 accounts = result.data if result.data else []
 
@@ -516,7 +516,7 @@ class SubredditAnalyzer:
     @property
     def db(self):
         if self._db is None:
-            from database.supabase_client import db
+            from workers.database.supabase_client import db
             self._db = db
         return self._db
 

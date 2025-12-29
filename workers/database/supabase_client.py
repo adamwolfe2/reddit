@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 import json
 
-from config import config
+from workers.config import config
 
 
 class SupabaseClient:

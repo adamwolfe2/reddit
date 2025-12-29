@@ -8,9 +8,9 @@ import time
 import random
 import logging
 
-from reddit.auth import RedditClient
-from database.supabase_client import db
-from ai.content import ContentGenerator
+from workers.reddit.auth import RedditClient
+from workers.database.supabase_client import db
+from workers.ai.content import ContentGenerator
 
 logger = logging.getLogger(__name__)
 

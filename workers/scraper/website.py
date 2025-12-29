@@ -14,7 +14,7 @@ except ImportError:
 
 import anthropic
 
-from config import config
+from workers.config import config
 
 logger = logging.getLogger(__name__)
 

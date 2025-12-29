@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 import json
 import logging
 
-from config import config
+from workers.config import config
 
 logger = logging.getLogger(__name__)
 
